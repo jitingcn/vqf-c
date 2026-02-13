@@ -7,6 +7,27 @@
 #include "vqf.h"
 #include <string.h>
 
+// CMSIS-DSP optimization support
+#ifdef CONFIG_CMSIS_DSP
+#include <arm_math.h>
+#define USE_CMSIS_DSP 1
+#else
+#define USE_CMSIS_DSP 0
+#endif
+
+// Math function wrappers for CMSIS-DSP optimization
+#if USE_CMSIS_DSP
+#define VQF_SIN(x)    arm_sin_f32(x)
+#define VQF_COS(x)    arm_cos_f32(x)
+#define VQF_SQRT(x)   ({ float32_t __res; arm_sqrt_f32((x), &__res); __res; })
+#define VQF_ATAN2(y,x) arm_atan2_f32((y), (x))
+#else
+#define VQF_SIN(x)     sinf(x)
+#define VQF_COS(x)     cosf(x)
+#define VQF_SQRT(x)    sqrtf(x)
+#define VQF_ATAN2(y,x) atan2f((y), (x))
+#endif
+
 #define EPS FLT_EPSILON
 #define NaN NAN
 #define M_SQRT2     1.41421356237309504880f   // sqrt(2)s
@@ -73,7 +94,7 @@ static vqf_real_t norm(const vqf_real_t vec[], size_t N)
         s += vec[i]*vec[i];
     }
     // sqrt can be replaced by arm_sqrt_f32 from CMSIS_DSP
-    return sqrt(s);
+    return VQF_SQRT(s);
 }
 
 static void normalize(vqf_real_t vec[], size_t N)
@@ -174,7 +195,7 @@ static void filterCoeffs(vqf_real_t tau, vqf_real_t Ts, vqf_double_t outB[3], vq
     // tan_fast can be replaced by sin/cos from CMSIS_DSP lib
     vqf_double_t C = tanf(M_PIf*fc*(vqf_double_t)(Ts));
     // sqrt can be replaced by arm_sqrt_f32 from CMSIS_DSP
-    vqf_double_t D = C*C + sqrtf(2)*C + 1;
+    vqf_double_t D = C*C + VQF_SQRT(2)*C + 1;
     vqf_double_t b0 = C*C/D;
     outB[0] = b0;
     outB[1] = 2*b0;
@@ -182,7 +203,7 @@ static void filterCoeffs(vqf_real_t tau, vqf_real_t Ts, vqf_double_t outB[3], vq
     // a0 = 1.0
     outA[0] = 2*(C*C-1)/D; // a1
     // sqrt can be replaced by arm_sqrt_f32 from CMSIS_DSP
-    outA[1] = (1-sqrtf(2)*C+C*C)/D; // a2
+    outA[1] = (1-VQF_SQRT(2)*C+C*C)/D; // a2
 }
 
 static void filterInitialState(vqf_real_t x0, const vqf_double_t b[], const vqf_double_t a[], vqf_double_t out[2])
@@ -362,7 +383,6 @@ void updateGyr(vqf_params_t *const params, vqf_state_t *const state, vqf_coeffs_
 
         vqf_real_t biasClip = params->biasClip*(vqf_real_t)(M_PIf/180.0f);
         if (state->restLastSquaredDeviations[0] >= vqf_square(params->restThGyr*(vqf_real_t)(M_PIf/180.0f))
-                // fabs can be replaced by arm_abs_f32 from CMSIS-DSP
                 || fabsf(state->restLastGyrLp[0]) > biasClip || fabsf(state->restLastGyrLp[1]) > biasClip
                 || fabsf(state->restLastGyrLp[2]) > biasClip) {
             state->restT = 0.0;
@@ -378,8 +398,8 @@ void updateGyr(vqf_params_t *const params, vqf_state_t *const state, vqf_coeffs_
     vqf_real_t angle = gyrNorm * coeffs->gyrTs;
     if (gyrNorm > EPS) {
         // sin cos can be replaced by arm_sin_f32 and arm_cos_f32 from CMSIS-DSP
-        vqf_real_t c = cosf(angle/2);
-        vqf_real_t s = sinf(angle/2)/gyrNorm;
+        vqf_real_t c = VQF_COS(angle/2);
+        vqf_real_t s = VQF_SIN(angle/2)/gyrNorm;
         vqf_real_t gyrStepQuat[4] = {c, s*gyrNoBias[0], s*gyrNoBias[1], s*gyrNoBias[2]};
         quatMultiply(state->gyrQuat, gyrStepQuat, state->gyrQuat);
         normalize(state->gyrQuat, 4);
@@ -425,7 +445,7 @@ void updateAcc(vqf_params_t *const params, vqf_state_t *const state, vqf_coeffs_
     // inclination correction
     vqf_real_t accCorrQuat[4];
     // sqrt can be replaced by arm_sqrt_f32 from CMSIS_DSP
-    vqf_real_t q_w = sqrt((accEarth[2]+1)/2);
+    vqf_real_t q_w = VQF_SQRT((accEarth[2]+1)/2);
     if (q_w > 1e-6f) {
         accCorrQuat[0] = q_w;
         accCorrQuat[1] = 0.5f*accEarth[1]/q_w;
@@ -737,14 +757,13 @@ vqf_real_t getBiasEstimate(vqf_state_t *const state, vqf_coeffs_t *const coeffs,
     }
     // use largest absolute row sum as upper bound estimate for largest eigenvalue (Gershgorin circle theorem)
     // and clip output to biasSigmaInit
-    // fabs can be replaced by arm_abs_f32 from CMSIS-DSP
-    vqf_real_t sum1 = fabs(state->biasP[0]) + fabs(state->biasP[1]) + fabs(state->biasP[2]);
-    vqf_real_t sum2 = fabs(state->biasP[3]) + fabs(state->biasP[4]) + fabs(state->biasP[5]);
-    vqf_real_t sum3 = fabs(state->biasP[6]) + fabs(state->biasP[7]) + fabs(state->biasP[8]);
+    vqf_real_t sum1 = fabsf(state->biasP[0]) + fabsf(state->biasP[1]) + fabsf(state->biasP[2]);
+    vqf_real_t sum2 = fabsf(state->biasP[3]) + fabsf(state->biasP[4]) + fabsf(state->biasP[5]);
+    vqf_real_t sum3 = fabsf(state->biasP[6]) + fabsf(state->biasP[7]) + fabsf(state->biasP[8]);
     vqf_real_t P = vqf_min(vqf_max(vqf_max(sum1, sum2), sum3), coeffs->biasP0);
     // convert standard deviation from 0.01deg to rad
     // sqrt can be replaced by arm_sqrt_f32 from CMSIS_DSP
-    return sqrtf(P)*(vqf_real_t)(M_PIf/100.0f/180.0f);
+    return VQF_SQRT(P)*(vqf_real_t)(M_PIf/100.0f/180.0f);
 }
 
 void setBiasEstimate(vqf_state_t *const state, vqf_real_t bias[3], vqf_real_t sigma)
