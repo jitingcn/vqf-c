@@ -64,13 +64,18 @@ void init_params(vqf_params_t *const params)
 
 static void vqf_fill_real(vqf_real_t *dst, size_t n, vqf_real_t val)
 {
+#if USE_CMSIS_DSP
+    arm_fill_f32(val, dst, n);
+#else
     for (size_t i = 0; i < n; i++) {
         dst[i] = val;
     }
+#endif
 }
 
 static void vqf_fill_double(vqf_double_t *dst, size_t n, vqf_double_t val)
 {
+    // CMSIS-DSP doesn't have double fill, use loop
     for (size_t i = 0; i < n; i++) {
         dst[i] = val;
     }
@@ -89,12 +94,19 @@ static float vqf_min(float a, float b) {
 
 static vqf_real_t norm(const vqf_real_t vec[], size_t N)
 {
+#if USE_CMSIS_DSP
+    vqf_real_t result;
+    // Use dot product for sum of squares, then sqrt
+    arm_dot_prod_f32(vec, vec, N, &result);
+    arm_sqrt_f32(result, &result);
+    return result;
+#else
     vqf_real_t s = 0;
     for(size_t i = 0; i < N; i++) {
         s += vec[i]*vec[i];
     }
-    // sqrt can be replaced by arm_sqrt_f32 from CMSIS_DSP
     return VQF_SQRT(s);
+#endif
 }
 
 static void normalize(vqf_real_t vec[], size_t N)
@@ -103,13 +115,20 @@ static void normalize(vqf_real_t vec[], size_t N)
     if (n < EPS) {
         return;
     }
+#if USE_CMSIS_DSP
+    arm_scale_f32(vec, 1.0f/n, vec, N);
+#else
     for(size_t i = 0; i < N; i++) {
         vec[i] /= n;
     }
+#endif
 }
 
 static void clip(vqf_real_t vec[], size_t N, vqf_real_t min, vqf_real_t max)
 {
+#if USE_CMSIS_DSP
+    arm_clip_f32(vec, vec, min, max, N);
+#else
     for(size_t i = 0; i < N; i++) {
         if (vec[i] < min) {
             vec[i] = min;
@@ -117,6 +136,7 @@ static void clip(vqf_real_t vec[], size_t N, vqf_real_t min, vqf_real_t max)
             vec[i] = max;
         }
     }
+#endif
 }
 
 
@@ -153,9 +173,14 @@ static void quatSetToIdentity(vqf_real_t out[4])
 static void quatApplyDelta(vqf_real_t q[4], vqf_real_t delta, vqf_real_t out[4])
 {
     // out = quatMultiply([cos(delta/2), 0, 0, sin(delta/2)], q)
-    // sin and cos can be replaced by arm_sin_f32 and arm_cos_f32 from CMSIS-DSP
+#if USE_CMSIS_DSP
+    vqf_real_t half_delta = delta * 0.5f;
+    vqf_real_t s, c;
+    arm_sin_cos_f32(half_delta, &s, &c);
+#else
     vqf_real_t c = cosf(delta/2);
     vqf_real_t s = sinf(delta/2);
+#endif
     vqf_real_t w = c * q[0] - s * q[3];
     vqf_real_t x = c * q[1] - s * q[2];
     vqf_real_t y = c * q[2] + s * q[1];
@@ -284,6 +309,20 @@ static void matrix3SetToScaledIdentity(vqf_real_t scale, vqf_real_t out[9])
 
 static void matrix3Multiply(const vqf_real_t in1[9], const vqf_real_t in2[9], vqf_real_t out[9])
 {
+#if USE_CMSIS_DSP
+    // Use CMSIS-DSP matrix multiplication (both matrices stored in row-major order)
+    arm_matrix_instance_f32 mat_in1;
+    arm_matrix_instance_f32 mat_in2;
+    arm_matrix_instance_f32 mat_out;
+    vqf_real_t tmp[9];
+
+    arm_mat_init_f32(&mat_in1, 3, 3, (float32_t*)in1);
+    arm_mat_init_f32(&mat_in2, 3, 3, (float32_t*)in2);
+    arm_mat_init_f32(&mat_out, 3, 3, tmp);
+
+    arm_mat_mult_f32(&mat_in1, &mat_in2, &mat_out);
+    memcpy(out, tmp, sizeof(tmp));
+#else
     vqf_real_t tmp[9];
     tmp[0] = in1[0]*in2[0] + in1[1]*in2[3] + in1[2]*in2[6];
     tmp[1] = in1[0]*in2[1] + in1[1]*in2[4] + in1[2]*in2[7];
@@ -295,11 +334,26 @@ static void matrix3Multiply(const vqf_real_t in1[9], const vqf_real_t in2[9], vq
     tmp[7] = in1[6]*in2[1] + in1[7]*in2[4] + in1[8]*in2[7];
     tmp[8] = in1[6]*in2[2] + in1[7]*in2[5] + in1[8]*in2[8];
     memcpy(out, tmp, sizeof(tmp));
-    // std::copy(tmp, tmp+9, out);
+#endif
 }
 
 static void matrix3MultiplyTpsFirst(const vqf_real_t in1[9], const vqf_real_t in2[9], vqf_real_t out[9])
 {
+#if USE_CMSIS_DSP
+    // Multiply in1^T * in2 using CMSIS-DSP
+    arm_matrix_instance_f32 mat_in1;
+    arm_matrix_instance_f32 mat_in2;
+    arm_matrix_instance_f32 mat_out;
+    vqf_real_t tmp[9];
+
+    arm_mat_init_f32(&mat_in1, 3, 3, (float32_t*)in1);
+    arm_mat_init_f32(&mat_in2, 3, 3, (float32_t*)in2);
+    arm_mat_init_f32(&mat_out, 3, 3, tmp);
+
+    arm_mat_trans_f32(&mat_in1, &mat_in1); // Transpose in1 in place
+    arm_mat_mult_f32(&mat_in1, &mat_in2, &mat_out);
+    memcpy(out, tmp, sizeof(tmp));
+#else
     vqf_real_t tmp[9];
     tmp[0] = in1[0]*in2[0] + in1[3]*in2[3] + in1[6]*in2[6];
     tmp[1] = in1[0]*in2[1] + in1[3]*in2[4] + in1[6]*in2[7];
@@ -311,11 +365,29 @@ static void matrix3MultiplyTpsFirst(const vqf_real_t in1[9], const vqf_real_t in
     tmp[7] = in1[2]*in2[1] + in1[5]*in2[4] + in1[8]*in2[7];
     tmp[8] = in1[2]*in2[2] + in1[5]*in2[5] + in1[8]*in2[8];
     memcpy(out, tmp, sizeof(tmp));
-    // std::copy(tmp, tmp+9, out);
+#endif
 }
 
 static void matrix3MultiplyTpsSecond(const vqf_real_t in1[9], const vqf_real_t in2[9], vqf_real_t out[9])
 {
+#if USE_CMSIS_DSP
+    // Multiply in1 * in2^T using CMSIS-DSP
+    arm_matrix_instance_f32 mat_in1;
+    arm_matrix_instance_f32 mat_in2;
+    arm_matrix_instance_f32 mat_out;
+    vqf_real_t tmp[9];
+    vqf_real_t in2_trans[9];
+
+    arm_mat_init_f32(&mat_in1, 3, 3, (float32_t*)in1);
+    arm_mat_init_f32(&mat_in2, 3, 3, (float32_t*)in2);
+    arm_matrix_instance_f32 mat_in2_trans;
+    arm_mat_init_f32(&mat_in2_trans, 3, 3, in2_trans);
+    arm_mat_init_f32(&mat_out, 3, 3, tmp);
+
+    arm_mat_trans_f32(&mat_in2, &mat_in2_trans); // Transpose in2
+    arm_mat_mult_f32(&mat_in1, &mat_in2_trans, &mat_out);
+    memcpy(out, tmp, sizeof(tmp));
+#else
     vqf_real_t tmp[9];
     tmp[0] = in1[0]*in2[0] + in1[1]*in2[1] + in1[2]*in2[2];
     tmp[1] = in1[0]*in2[3] + in1[1]*in2[4] + in1[2]*in2[5];
@@ -327,11 +399,26 @@ static void matrix3MultiplyTpsSecond(const vqf_real_t in1[9], const vqf_real_t i
     tmp[7] = in1[6]*in2[3] + in1[7]*in2[4] + in1[8]*in2[5];
     tmp[8] = in1[6]*in2[6] + in1[7]*in2[7] + in1[8]*in2[8];
     memcpy(out, tmp, sizeof(tmp));
-    // std::copy(tmp, tmp+9, out);
+#endif
 }
 
 static bool matrix3Inv(const vqf_real_t in[9], vqf_real_t out[9])
 {
+#if USE_CMSIS_DSP
+    arm_matrix_instance_f32 mat_in;
+    arm_matrix_instance_f32 mat_out;
+
+    arm_mat_init_f32(&mat_in, 3, 3, (float32_t*)in);
+    arm_mat_init_f32(&mat_out, 3, 3, out);
+
+    arm_status status = arm_mat_inverse_f32(&mat_in, &mat_out);
+
+    if (status != ARM_MATH_SUCCESS) {
+        vqf_fill_real(out, 9, 0);
+        return false;
+    }
+    return true;
+#else
     // in = [a b c; d e f; g h i]
     vqf_double_t A = in[4]*in[8] - in[5]*in[7]; // (e*i - f*h)
     vqf_double_t D = in[2]*in[7] - in[1]*in[8]; // -(b*i - c*h)
@@ -347,7 +434,6 @@ static bool matrix3Inv(const vqf_real_t in[9], vqf_real_t out[9])
 
     if (det >= -EPS && det <= EPS) {
         vqf_fill_real(out, 9, 0);
-        // std::fill(out, out+9, 0);
         return false;
     }
 
@@ -363,6 +449,7 @@ static bool matrix3Inv(const vqf_real_t in[9], vqf_real_t out[9])
     out[8] = I/det;
 
     return true;
+#endif
 }
 
 
