@@ -344,14 +344,17 @@ static void matrix3MultiplyTpsFirst(const vqf_real_t in1[9], const vqf_real_t in
     arm_matrix_instance_f32 mat_in1;
     arm_matrix_instance_f32 mat_in2;
     arm_matrix_instance_f32 mat_out;
+    arm_matrix_instance_f32 mat_in1_trans;
     vqf_real_t tmp[9];
+    vqf_real_t in1_trans[9];
 
     arm_mat_init_f32(&mat_in1, 3, 3, (float32_t*)in1);
     arm_mat_init_f32(&mat_in2, 3, 3, (float32_t*)in2);
+    arm_mat_init_f32(&mat_in1_trans, 3, 3, in1_trans);
     arm_mat_init_f32(&mat_out, 3, 3, tmp);
 
-    arm_mat_trans_f32(&mat_in1, &mat_in1); // Transpose in1 in place
-    arm_mat_mult_f32(&mat_in1, &mat_in2, &mat_out);
+    arm_mat_trans_f32(&mat_in1, &mat_in1_trans); // Transpose in1 to separate buffer
+    arm_mat_mult_f32(&mat_in1_trans, &mat_in2, &mat_out);
     memcpy(out, tmp, sizeof(tmp));
 #else
     vqf_real_t tmp[9];
@@ -407,8 +410,12 @@ static bool matrix3Inv(const vqf_real_t in[9], vqf_real_t out[9])
 #if USE_CMSIS_DSP
     arm_matrix_instance_f32 mat_in;
     arm_matrix_instance_f32 mat_out;
+    vqf_real_t in_copy[9];
 
-    arm_mat_init_f32(&mat_in, 3, 3, (float32_t*)in);
+    // Make a copy to avoid modifying const input
+    memcpy(in_copy, in, sizeof(in_copy));
+
+    arm_mat_init_f32(&mat_in, 3, 3, in_copy);
     arm_mat_init_f32(&mat_out, 3, 3, out);
 
     arm_status status = arm_mat_inverse_f32(&mat_in, &mat_out);
