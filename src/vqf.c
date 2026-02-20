@@ -99,8 +99,9 @@ static vqf_real_t norm(const vqf_real_t vec[], size_t N)
     vqf_real_t result;
     // Use dot product for sum of squares, then sqrt
     arm_dot_prod_f32(vec, vec, N, &result);
-    arm_sqrt_f32(result, &result);
-    return result;
+    float out;
+    arm_sqrt_f32(result, &out);
+    return out;
 #else
     vqf_real_t s = 0;
     for(size_t i = 0; i < N; i++) {
@@ -144,11 +145,19 @@ static void clip(vqf_real_t vec[], size_t N, vqf_real_t min, vqf_real_t max)
 // this func can be replaced by arm_quaternion_product_f32 from CMSIS-DSP
 static void quatMultiply(const vqf_real_t q1[4], const vqf_real_t q2[4], vqf_real_t out[4])
 {
+#if USE_CMSIS_DSP
+    // NOTE: CMSIS-DSP implementation is NOT safe for in-place operation.
+    // In this project we frequently call quatMultiply(q, dq, q), so we must use a temporary.
+    vqf_real_t tmp[4];
+    arm_quaternion_product_f32((const float*) q1, (const float*) q2, (float*) tmp, 1);
+    out[0] = tmp[0]; out[1] = tmp[1]; out[2] = tmp[2]; out[3] = tmp[3];
+#else
     vqf_real_t w = q1[0] * q2[0] - q1[1] * q2[1] - q1[2] * q2[2] - q1[3] * q2[3];
     vqf_real_t x = q1[0] * q2[1] + q1[1] * q2[0] + q1[2] * q2[3] - q1[3] * q2[2];
     vqf_real_t y = q1[0] * q2[2] - q1[1] * q2[3] + q1[2] * q2[0] + q1[3] * q2[1];
     vqf_real_t z = q1[0] * q2[3] + q1[1] * q2[2] - q1[2] * q2[1] + q1[3] * q2[0];
     out[0] = w; out[1] = x; out[2] = y; out[3] = z;
+#endif
 }
 
 /*
@@ -883,9 +892,8 @@ bool getMagDistDetected(vqf_state_t *const state)
 
 void getRelativeRestDeviations(vqf_params_t *const params, vqf_state_t *const state, vqf_real_t out[2])
 {
-    // sqrt can be replaced by arm_sqrt_f32 from CMSIS_DSP
-    out[0] = sqrtf(state->restLastSquaredDeviations[0]) / (params->restThGyr*(vqf_real_t)(M_PIf/180.0f));
-    out[1] = sqrtf(state->restLastSquaredDeviations[1]) / params->restThAcc;
+    out[0] = VQF_SQRT(state->restLastSquaredDeviations[0]) / (params->restThGyr*(vqf_real_t)(M_PIf/180.0f));
+    out[1] = VQF_SQRT(state->restLastSquaredDeviations[1]) / params->restThAcc;
 }
 
 vqf_real_t getMagRefNorm(vqf_state_t *const state)
