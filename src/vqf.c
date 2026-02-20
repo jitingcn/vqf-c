@@ -44,6 +44,12 @@ static inline vqf_real_t vqf_sqrt(vqf_real_t x)
 #endif
 #define M_PIf       3.14159265358979323846f
 
+// tolerances
+#define VQF_NORMALIZE_TOL ((vqf_real_t)vqf_max(1e-6f, EPS))
+#define VQF_DET_TOL       ((vqf_real_t)vqf_max(1e-8f, EPS))
+#define VQF_GYR_TOL_DPS   ((vqf_real_t)0.18f)
+#define VQF_GYR_TOL       ((vqf_real_t)(VQF_GYR_TOL_DPS * M_PIf / 180.0f))
+
 void init_params(vqf_params_t *const params)
 {
     params->tauAcc = 3.0f;
@@ -124,7 +130,7 @@ static vqf_real_t norm(const vqf_real_t vec[], size_t N)
 static void normalize(vqf_real_t vec[], size_t N)
 {
     vqf_real_t n = norm(vec, N);
-    if (n < EPS) {
+    if (n < VQF_NORMALIZE_TOL) {
         return;
     }
 #if USE_CMSIS_DSP
@@ -467,7 +473,7 @@ static bool matrix3Inv(const vqf_real_t in[9], vqf_real_t out[9])
 
     vqf_double_t det = in[0]*A + in[1]*B + in[2]*C; // a*A + b*B + c*C;
 
-    if (det >= -EPS && det <= EPS) {
+    if (det >= -VQF_DET_TOL && det <= VQF_DET_TOL) {
         vqf_fill_real(out, 9, 0);
         return false;
     }
@@ -519,7 +525,7 @@ static void updateGyr_internal(vqf_params_t *const params, vqf_state_t *const st
     // gyroscope prediction step
     vqf_real_t gyrNorm = norm(gyrNoBias, 3);
     vqf_real_t angle = gyrNorm * Ts;
-    if (gyrNorm > EPS) {
+    if (gyrNorm > VQF_GYR_TOL) {
         // sin cos can be replaced by arm_sin_f32 and arm_cos_f32 from CMSIS-DSP
         vqf_real_t c = VQF_COS(angle/2);
         vqf_real_t s = VQF_SIN(angle/2)/gyrNorm;
