@@ -19,7 +19,16 @@
 #if USE_CMSIS_DSP
 #define VQF_SIN(x)    arm_sin_f32(x)
 #define VQF_COS(x)    arm_cos_f32(x)
-#define VQF_SQRT(x)   ({ float32_t __res; arm_sqrt_f32((x), &__res); __res; })
+static inline vqf_real_t vqf_sqrt(vqf_real_t x)
+{
+    if (x <= (vqf_real_t)0.0f) {
+        return 0.0f;
+    }
+    float32_t out = 0.0f;
+    arm_status status = arm_sqrt_f32((float32_t)x, &out);
+    return status == ARM_MATH_SUCCESS ? (vqf_real_t)out : 0.0f;
+}
+#define VQF_SQRT(x)    vqf_sqrt((x))
 #define VQF_ATAN2(y,x) arm_atan2_f32((y), (x))
 #else
 #define VQF_SIN(x)     sinf(x)
@@ -226,6 +235,14 @@ static void filterCoeffs(vqf_real_t tau, vqf_real_t Ts, vqf_double_t outB[3], vq
 {
     // assert(tau > 0);
     // assert(Ts > 0);
+    if (tau <= (vqf_real_t)(0.0f) || Ts <= (vqf_real_t)(0.0f)) {
+        outB[0] = 1.0f;
+        outB[1] = 0.0f;
+        outB[2] = 0.0f;
+        outA[0] = 0.0f;
+        outA[1] = 0.0f;
+        return;
+    }
     // second order Butterworth filter based on https://stackoverflow.com/a/52764064
     vqf_double_t fc = (M_SQRT2 / (2.0f*M_PIf))/(vqf_double_t)(tau); // time constant of dampened, non-oscillating part of step response
     // tan_fast can be replaced by sin/cos from CMSIS_DSP lib
@@ -550,7 +567,8 @@ void updateAcc(vqf_params_t *const params, vqf_state_t *const state, vqf_coeffs_
     // inclination correction
     vqf_real_t accCorrQuat[4];
     // sqrt can be replaced by arm_sqrt_f32 from CMSIS_DSP
-    vqf_real_t q_w = VQF_SQRT((accEarth[2]+1)/2);
+    vqf_real_t q_w_arg = vqf_min(vqf_max((accEarth[2] + 1.0f) * 0.5f, (vqf_real_t)(0.0f)), (vqf_real_t)(1.0f));
+    vqf_real_t q_w = VQF_SQRT(q_w_arg);
     if (q_w > 1e-6f) {
         accCorrQuat[0] = q_w;
         accCorrQuat[1] = 0.5f*accEarth[1]/q_w;
@@ -568,7 +586,8 @@ void updateAcc(vqf_params_t *const params, vqf_state_t *const state, vqf_coeffs_
 
     // calculate correction angular rate to facilitate debugging
     // acos can be replaced by 2*arctan( sqrt(1-x*x) / x )
-    state->lastAccCorrAngularRate = acosf(accEarth[2])/coeffs->accTs;
+    vqf_real_t accEarthZ = vqf_min(vqf_max(accEarth[2], (vqf_real_t)(-1.0f)), (vqf_real_t)(1.0f));
+    state->lastAccCorrAngularRate = acosf(accEarthZ)/coeffs->accTs;
 
     // bias estimation
     if (params->motionBiasEstEnabled || params->restBiasEstEnabled) {
@@ -682,8 +701,13 @@ void updateMag(vqf_params_t *const params, vqf_state_t *const state, vqf_coeffs_
 
     if (params->magDistRejectionEnabled) {
         state->magNormDip[0] = norm(magEarth, 3);
+        if (state->magNormDip[0] < EPS) {
+            return;
+        }
         // asin can be replace by 2*arctan(x / sqrt(1-x*x))
-        state->magNormDip[1] = -asin(magEarth[2]/state->magNormDip[0]);
+        vqf_real_t magSinDip = magEarth[2]/state->magNormDip[0];
+        magSinDip = vqf_min(vqf_max(magSinDip, (vqf_real_t)(-1.0f)), (vqf_real_t)(1.0f));
+        state->magNormDip[1] = -asinf(magSinDip);
 
         if (params->magCurrentTau > 0) {
             filterVec(state->magNormDip, 2, params->magCurrentTau, coeffs->magTs, coeffs->magNormDipLpB,
@@ -716,7 +740,7 @@ void updateMag(vqf_params_t *const params, vqf_state_t *const state, vqf_coeffs_
             state->magCandidateDip += coeffs->kMagRef*(state->magNormDip[1] - state->magCandidateDip);
 
             if (state->magDistDetected && (state->magCandidateT >= params->magNewTime || (
-                    state->magRefNorm == 0.0f && state->magCandidateT >= params->magNewFirstTime))) {
+                    state->magRefNorm <= 0.0f && state->magCandidateT >= params->magNewFirstTime))) {
                 state->magRefNorm = state->magCandidateNorm;
                 state->magRefDip = state->magCandidateDip;
                 state->magDistDetected = false;
@@ -933,7 +957,7 @@ void setRestBiasEstEnabled(vqf_params_t *const params, vqf_state_t *const state,
     params->restBiasEstEnabled = enabled;
     state->restDetected = false;
 
-    vqf_fill_real(state->restLastSquaredDeviations, 3, 0.0);
+    vqf_fill_real(state->restLastSquaredDeviations, 2, 0.0);
     // std::fill(state->restLastSquaredDeviations, state->restLastSquaredDeviations + 3, 0.0);
     state->restT = 0.0;
     vqf_fill_real(state->restLastGyrLp, 3, 0.0);
@@ -953,7 +977,7 @@ void setMagDistRejectionEnabled(vqf_params_t *const params, vqf_state_t *const s
     }
     params->magDistRejectionEnabled = enabled;
     state->magDistDetected = true;
-    state->magRefNorm = 0.0;
+    state->magRefNorm = -1.0;
     state->magRefDip = 0.0;
     state->magUndisturbedT = 0.0;
     state->magRejectT = params->magMaxRejectionTime;
@@ -971,7 +995,7 @@ void setTauAcc(vqf_params_t *const params, vqf_state_t *const state, vqf_coeffs_
     }
     params->tauAcc = tauAcc;
     vqf_double_t newB[3];
-    vqf_double_t newA[3];
+    vqf_double_t newA[2];
 
     filterCoeffs(params->tauAcc, coeffs->accTs, newB, newA);
     filterAdaptStateForCoeffChange(state->lastAccLp, 3, coeffs->accLpB, coeffs->accLpA, newB, newA, state->accLpState);
@@ -991,7 +1015,7 @@ void setTauAcc(vqf_params_t *const params, vqf_state_t *const state, vqf_coeffs_
 
     memcpy(coeffs->accLpB, newB, sizeof(newB));
     // std::copy(newB, newB+3, coeffs->accLpB);
-    memcpy(coeffs->accLpA, newA, sizeof(newA));
+    memcpy(coeffs->accLpA, newA, sizeof(coeffs->accLpA));
     // std::copy(newA, newA+2, coeffs->accLpA);
 }
 
@@ -1032,16 +1056,13 @@ void resetState(vqf_params_t *const params, vqf_state_t *const state, vqf_coeffs
     matrix3SetToScaledIdentity(coeffs->biasP0, state->biasP);
 
 
-    for (size_t i = 0; i < 3; i++) {
-        state->restLastGyrLp[i] = NaN;
-    }
     vqf_fill_double(state->motionBiasEstRLpState, 9*2, NaN);
     // std::fill(state->motionBiasEstRLpState, state->motionBiasEstRLpState + 9*2, NaN);
     vqf_fill_double(state->motionBiasEstBiasLpState, 2*2, NaN);
     // std::fill(state->motionBiasEstBiasLpState, state->motionBiasEstBiasLpState + 2*2, NaN);
 
 
-    vqf_fill_real(state->restLastSquaredDeviations, 3, 0.0);
+    vqf_fill_real(state->restLastSquaredDeviations, 2, 0.0);
     // std::fill(state->restLastSquaredDeviations, state->restLastSquaredDeviations + 3, 0.0);
     state->restT = 0.0;
     vqf_fill_real(state->restLastGyrLp, 3, 0.0);
@@ -1053,7 +1074,7 @@ void resetState(vqf_params_t *const params, vqf_state_t *const state, vqf_coeffs
     vqf_fill_double(state->restAccLpState, 3*2, NaN);
     // std::fill(state->restAccLpState, state->restAccLpState + 3*2, NaN);
 
-    state->magRefNorm = 0.0;
+    state->magRefNorm = -1.0;
     state->magRefDip = 0.0;
     state->magUndisturbedT = 0.0;
     state->magRejectT = params->magMaxRejectionTime;
@@ -1078,7 +1099,8 @@ void setup(vqf_params_t *const params, vqf_state_t *const state, vqf_coeffs_t *c
 
     coeffs->biasP0 = vqf_square(params->biasSigmaInit*100.0f);
     // the system noise increases the variance from 0 to (0.1 °/s)^2 in biasForgettingTime seconds
-    coeffs->biasV = vqf_square(0.1*100.0)*coeffs->accTs/params->biasForgettingTime;
+    vqf_real_t safeBiasForgettingTime = vqf_max(params->biasForgettingTime, (vqf_real_t)(1e-6f));
+    coeffs->biasV = vqf_square(0.1f*100.0f)*coeffs->accTs/safeBiasForgettingTime;
 
 
     vqf_real_t pMotion = vqf_square(params->biasSigmaMotion*100.0f);
@@ -1108,9 +1130,10 @@ void setup(vqf_params_t *const params, vqf_state_t *const state, vqf_coeffs_t *c
 
 void initVqf(vqf_params_t *const params, vqf_state_t *const state, vqf_coeffs_t *const coeffs, vqf_real_t gyrTs, vqf_real_t accTs, vqf_real_t magTs)
 {
-    coeffs->gyrTs = gyrTs;
-    coeffs->accTs = accTs > 0 ? accTs : gyrTs;
-    coeffs->magTs = magTs > 0 ? magTs : gyrTs;
+    vqf_real_t safeGyrTs = gyrTs > 0 ? gyrTs : (vqf_real_t)(0.01f);
+    coeffs->gyrTs = safeGyrTs;
+    coeffs->accTs = accTs > 0 ? accTs : safeGyrTs;
+    coeffs->magTs = magTs > 0 ? magTs : safeGyrTs;
 
     setup(params, state, coeffs);
 }
