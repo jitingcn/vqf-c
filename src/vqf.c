@@ -5,7 +5,6 @@
 #include <math.h>
 #include <stdbool.h>
 #include "vqf.h"
-#include <string.h>
 
 // CMSIS-DSP optimization support
 #ifdef CONFIG_CMSIS_DSP
