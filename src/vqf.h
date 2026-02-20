@@ -5,6 +5,9 @@
 #ifndef VQF_H__
 #define VQF_H__
 
+#include <stdint.h>
+#include <stdbool.h>
+
 #define VQF_SINGLE_PRECISION
 // #define VQF_NO_MOTION_BIAS_ESTIMATION
 
@@ -416,6 +419,15 @@ typedef struct vqf_state_s {
     vqf_double_t restAccLpState[3*2];
 
     /**
+     * @brief Last sample timestamps for each sensor in microseconds (monotonic). Zero if unknown.
+     *
+     * These timestamps are used by the `*Ts` update functions to compute the actual delta time between samples.
+     */
+    uint64_t lastGyrTsUs;
+    uint64_t lastAccTsUs;
+    uint64_t lastMagTsUs;
+
+    /**
      * @brief Norm of the currently accepted magnetic field reference.
      *
      * A value of -1 indicates that no homogeneous field is found yet.
@@ -631,6 +643,16 @@ void initVqf(vqf_params_t *const params, vqf_state_t *const state, vqf_coeffs_t 
  */
 void updateGyr(vqf_params_t *const params, vqf_state_t *const state, vqf_coeffs_t *const coeffs, const vqf_real_t gyr[3]);
 /**
+ * @brief Same as #updateGyr but uses a per-sample monotonic timestamp (microseconds) to derive the sample interval.
+ *
+ * If the stored last timestamp is zero or the provided timestamp is invalid (non-monotonic or out-of-range),
+ * the configured sampling time `coeffs->gyrTs` is used as fallback. Timestamp unit: microseconds (monotonic clock).
+ *
+ * @param gyr gyroscope measurement in rad/s
+ * @param timestamp_us monotonic timestamp in microseconds
+ */
+void updateGyrTs(vqf_params_t *const params, vqf_state_t *const state, vqf_coeffs_t *const coeffs, const vqf_real_t gyr[3], uint64_t timestamp_us);
+/**
  * @brief Performs accelerometer update step.
  *
  * It is only necessary to call this function directly if gyroscope, accelerometers and magnetometers have
@@ -642,6 +664,15 @@ void updateGyr(vqf_params_t *const params, vqf_state_t *const state, vqf_coeffs_
  */
 void updateAcc(vqf_params_t *const params, vqf_state_t *const state, vqf_coeffs_t *const coeffs, const vqf_real_t acc[3]);
 /**
+ * @brief Same as #updateAcc but uses a per-sample monotonic timestamp (microseconds) to derive the sample interval.
+ *
+ * See #updateGyrTs for behavior and fallback rules.
+ *
+ * @param acc accelerometer measurement in m/s²
+ * @param timestamp_us monotonic timestamp in microseconds
+ */
+void updateAccTs(vqf_params_t *const params, vqf_state_t *const state, vqf_coeffs_t *const coeffs, const vqf_real_t acc[3], uint64_t timestamp_us);
+/**
  * @brief Performs magnetometer update step.
  *
  * It is only necessary to call this function directly if gyroscope, accelerometers and magnetometers have
@@ -652,6 +683,15 @@ void updateAcc(vqf_params_t *const params, vqf_state_t *const state, vqf_coeffs_
  * @param mag magnetometer measurement in arbitrary units
  */
 void updateMag(vqf_params_t *const params, vqf_state_t *const state, vqf_coeffs_t *const coeffs, const vqf_real_t mag[3]);
+/**
+ * @brief Same as #updateMag but uses a per-sample monotonic timestamp (microseconds) to derive the sample interval.
+ *
+ * See #updateGyrTs for behavior and fallback rules.
+ *
+ * @param mag magnetometer measurement in arbitrary units
+ * @param timestamp_us monotonic timestamp in microseconds
+ */
+void updateMagTs(vqf_params_t *const params, vqf_state_t *const state, vqf_coeffs_t *const coeffs, const vqf_real_t mag[3], uint64_t timestamp_us);
 /**
  * @brief Performs filter update step for one sample (magnetometer-free).
  * @param gyr gyroscope measurement in rad/s
