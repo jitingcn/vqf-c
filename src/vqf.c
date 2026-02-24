@@ -47,7 +47,7 @@ static inline vqf_real_t vqf_sqrt(vqf_real_t x)
 // tolerances
 #define VQF_NORMALIZE_TOL ((vqf_real_t)vqf_max(1e-6f, EPS))
 #define VQF_DET_TOL       ((vqf_real_t)vqf_max(1e-8f, EPS))
-#define VQF_GYR_TOL_DPS   ((vqf_real_t)0.18f)
+#define VQF_GYR_TOL_DPS   ((vqf_real_t)0.01f)
 #define VQF_GYR_TOL       ((vqf_real_t)(VQF_GYR_TOL_DPS * M_PIf / 180.0f))
 
 void init_params(vqf_params_t *const params)
@@ -526,7 +526,6 @@ static void updateGyr_internal(vqf_params_t *const params, vqf_state_t *const st
     vqf_real_t gyrNorm = norm(gyrNoBias, 3);
     vqf_real_t angle = gyrNorm * Ts;
     if (gyrNorm > VQF_GYR_TOL) {
-        // sin cos can be replaced by arm_sin_f32 and arm_cos_f32 from CMSIS-DSP
         vqf_real_t c = VQF_COS(angle/2);
         vqf_real_t s = VQF_SIN(angle/2)/gyrNorm;
         vqf_real_t gyrStepQuat[4] = {c, s*gyrNoBias[0], s*gyrNoBias[1], s*gyrNoBias[2]};
