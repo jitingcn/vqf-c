@@ -777,7 +777,7 @@ static void updateMag_internal(vqf_params_t *const params, vqf_state_t *const st
                 state->magRefDip += coeffs->kMagRef*(state->magNormDip[1] - state->magRefDip);
             }
         } else {
-            state->magUndisturbedT = 0.0;
+            state->magUndisturbedT = 0.0f;
             state->magDistDetected = true;
         }
 
@@ -799,7 +799,7 @@ static void updateMag_internal(vqf_params_t *const params, vqf_state_t *const st
                 state->magUndisturbedT = params->magMinUndisturbedTime;
             }
         } else {
-            state->magCandidateT = 0.0;
+            state->magCandidateT = 0.0f;
             state->magCandidateNorm = state->magNormDip[0];
             state->magCandidateDip = state->magNormDip[1];
         }
@@ -1052,13 +1052,13 @@ void setMagDistRejectionEnabled(vqf_params_t *const params, vqf_state_t *const s
     }
     params->magDistRejectionEnabled = enabled;
     state->magDistDetected = true;
-    state->magRefNorm = -1.0;
-    state->magRefDip = 0.0;
-    state->magUndisturbedT = 0.0;
+    state->magRefNorm = 0.0f;
+    state->magRefDip = 0.0f;
+    state->magUndisturbedT = 0.0f;
     state->magRejectT = params->magMaxRejectionTime;
-    state->magCandidateNorm = -1.0;
-    state->magCandidateDip = 0.0;
-    state->magCandidateT = 0.0;
+    state->magCandidateNorm = -1.0f;
+    state->magCandidateDip = 0.0f;
+    state->magCandidateT = 0.0f;
     vqf_fill_double(state->magNormDipLpState, 2*2, NaN);
     // std::fill(state->magNormDipLpState, state->magNormDipLpState + 2*2, NaN);
 }
@@ -1149,15 +1149,15 @@ void resetState(vqf_params_t *const params, vqf_state_t *const state, vqf_coeffs
     vqf_fill_double(state->restAccLpState, 3*2, NaN);
     // std::fill(state->restAccLpState, state->restAccLpState + 3*2, NaN);
 
-    state->magRefNorm = -1.0;
-    state->magRefDip = 0.0;
-    state->magUndisturbedT = 0.0;
+    state->magRefNorm = 0.0f;
+    state->magRefDip = 0.0f;
+    state->magUndisturbedT = 0.0f;
     state->magRejectT = params->magMaxRejectionTime;
-    state->magCandidateNorm = -1.0;
-    state->magCandidateDip = 0.0;
-    state->magCandidateT = 0.0;
-    vqf_fill_real(state->magNormDip, 2, 0);
-    // std::fill(state->magNormDip, state->magNormDip + 2, 0);
+    state->magCandidateNorm = -1.0f;
+    state->magCandidateDip = 0.0f;
+    state->magCandidateT = 0.0f;
+    vqf_fill_real(state->magNormDip, 2, 0.0f);
+    // std::fill(state->magNormDip, state->magNormDip + 2, 0.0f);
     vqf_fill_double(state->magNormDipLpState, 2*2, NaN);
     // std::fill(state->magNormDipLpState, state->magNormDipLpState + 2*2, NaN);
 
