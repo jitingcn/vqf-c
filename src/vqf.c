@@ -114,7 +114,7 @@ static float vqf_min(float a, float b) {
 
 static vqf_real_t norm(const vqf_real_t vec[], size_t N)
 {
-#if USE_CMSIS_DSP
+#if 0 && USE_CMSIS_DSP
     vqf_real_t result;
     // Use dot product for sum of squares, then sqrt
     arm_dot_prod_f32(vec, vec, N, &result);
@@ -164,7 +164,7 @@ static void clip(vqf_real_t vec[], size_t N, vqf_real_t min, vqf_real_t max)
 // this func can be replaced by arm_quaternion_product_f32 from CMSIS-DSP
 static void quatMultiply(const vqf_real_t q1[4], const vqf_real_t q2[4], vqf_real_t out[4])
 {
-#if USE_CMSIS_DSP
+#if 0 && USE_CMSIS_DSP
     // NOTE: CMSIS-DSP implementation is NOT safe for in-place operation.
     // In this project we frequently call quatMultiply(q, dq, q), so we must use a temporary.
     vqf_real_t tmp[4];
@@ -349,7 +349,7 @@ static void matrix3SetToScaledIdentity(vqf_real_t scale, vqf_real_t out[9])
 
 static void matrix3Multiply(const vqf_real_t in1[9], const vqf_real_t in2[9], vqf_real_t out[9])
 {
-#if USE_CMSIS_DSP
+#if 0 && USE_CMSIS_DSP
     // Use CMSIS-DSP matrix multiplication (both matrices stored in row-major order)
     arm_matrix_instance_f32 mat_in1;
     arm_matrix_instance_f32 mat_in2;
@@ -379,7 +379,7 @@ static void matrix3Multiply(const vqf_real_t in1[9], const vqf_real_t in2[9], vq
 
 static void matrix3MultiplyTpsFirst(const vqf_real_t in1[9], const vqf_real_t in2[9], vqf_real_t out[9])
 {
-#if USE_CMSIS_DSP
+#if 0 && USE_CMSIS_DSP
     // Multiply in1^T * in2 using CMSIS-DSP
     arm_matrix_instance_f32 mat_in1;
     arm_matrix_instance_f32 mat_in2;
@@ -413,7 +413,7 @@ static void matrix3MultiplyTpsFirst(const vqf_real_t in1[9], const vqf_real_t in
 
 static void matrix3MultiplyTpsSecond(const vqf_real_t in1[9], const vqf_real_t in2[9], vqf_real_t out[9])
 {
-#if USE_CMSIS_DSP
+#if 0 && USE_CMSIS_DSP
     // Multiply in1 * in2^T using CMSIS-DSP
     arm_matrix_instance_f32 mat_in1;
     arm_matrix_instance_f32 mat_in2;
@@ -447,7 +447,7 @@ static void matrix3MultiplyTpsSecond(const vqf_real_t in1[9], const vqf_real_t i
 
 static bool matrix3Inv(const vqf_real_t in[9], vqf_real_t out[9])
 {
-#if USE_CMSIS_DSP
+#if 0 && USE_CMSIS_DSP
     arm_matrix_instance_f32 mat_in;
     arm_matrix_instance_f32 mat_out;
     vqf_real_t in_copy[9];
