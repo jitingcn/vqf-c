@@ -29,7 +29,12 @@ static inline vqf_real_t vqf_sqrt(vqf_real_t x)
     return status == ARM_MATH_SUCCESS ? (vqf_real_t)out : 0.0f;
 }
 #define VQF_SQRT(x)    vqf_sqrt((x))
-#define VQF_ATAN2(y,x) arm_atan2_f32((y), (x))
+static inline vqf_real_t vqf_atan2(vqf_real_t y, vqf_real_t x) {
+    float32_t out = 0.0f;
+    arm_status status = arm_atan2_f32(y, x, &out);
+    return status == ARM_MATH_SUCCESS ? (vqf_real_t)out : 0.0f;
+}
+#define VQF_ATAN2(y,x) vqf_atan2((y), (x))
 #else
 #define VQF_SIN(x)     sinf(x)
 #define VQF_COS(x)     cosf(x)
@@ -809,7 +814,7 @@ static void updateMag_internal(vqf_params_t *const params, vqf_state_t *const st
     }
 
     // calculate disagreement angle based on current magnetometer measurement
-    state->lastMagDisAngle = atan2f(magEarth[0], magEarth[1]) - state->delta;
+    state->lastMagDisAngle = VQF_ATAN2(magEarth[0], magEarth[1]) - state->delta;
 
     // make sure the disagreement angle is in the range [-pi, pi]
     if (state->lastMagDisAngle > (vqf_real_t)(M_PIf)) {
