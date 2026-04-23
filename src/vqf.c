@@ -49,9 +49,6 @@ static inline vqf_real_t vqf_atan2(vqf_real_t y, vqf_real_t x) {
 #endif
 #define M_PIf       3.14159265358979323846f
 
-// tolerances
-#define VQF_NORMALIZE_TOL ((vqf_real_t)vqf_max(1e-7f, EPS))
-#define VQF_DET_TOL       ((vqf_real_t)vqf_max(1e-7f, EPS))
 
 void init_params(vqf_params_t *const params)
 {
@@ -133,7 +130,7 @@ static vqf_real_t norm(const vqf_real_t vec[], size_t N)
 static void normalize(vqf_real_t vec[], size_t N)
 {
     vqf_real_t n = norm(vec, N);
-    if (n < VQF_NORMALIZE_TOL) {
+    if (n < EPS) {
         return;
     }
 #if USE_CMSIS_DSP
@@ -479,7 +476,7 @@ static bool matrix3Inv(const vqf_real_t in[9], vqf_real_t out[9])
 
     vqf_double_t det = in[0]*A + in[1]*B + in[2]*C; // a*A + b*B + c*C;
 
-    if (det >= -VQF_DET_TOL && det <= VQF_DET_TOL) {
+    if (det >= -EPS && det <= EPS) {
         vqf_fill_real(out, 9, 0);
         return false;
     }
