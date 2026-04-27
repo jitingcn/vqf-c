@@ -252,6 +252,15 @@ static void filterCoeffs(vqf_real_t tau, vqf_real_t Ts, vqf_double_t outB[3], vq
         outA[1] = 0.0f;
         return;
     }
+    // disable the filter when tau < Ts/2 to avoid instability close to Nyquist
+    if (tau < Ts/(vqf_real_t)(2.0f)) {
+        outB[0] = 1.0f;
+        outB[1] = 0.0f;
+        outB[2] = 0.0f;
+        outA[0] = 0.0f;
+        outA[1] = 0.0f;
+        return;
+    }
     // second order Butterworth filter based on https://stackoverflow.com/a/52764064
     vqf_double_t fc = (M_SQRT2 / (2.0f*M_PIf))/(vqf_double_t)(tau); // time constant of dampened, non-oscillating part of step response
     // tan_fast can be replaced by sin/cos from CMSIS_DSP lib
@@ -1038,7 +1047,6 @@ void setRestBiasEstEnabled(vqf_params_t *const params, vqf_state_t *const state,
     state->restDetected = false;
 
     vqf_fill_real(state->restLastSquaredDeviations, 2, 0.0);
-    // std::fill(state->restLastSquaredDeviations, state->restLastSquaredDeviations + 3, 0.0);
     state->restT = 0.0;
     vqf_fill_real(state->restLastGyrLp, 3, 0.0);
     // std::fill(state->restLastGyrLp, state->restLastGyrLp + 3, 0.0);
@@ -1143,7 +1151,6 @@ void resetState(vqf_params_t *const params, vqf_state_t *const state, vqf_coeffs
 
 
     vqf_fill_real(state->restLastSquaredDeviations, 2, 0.0);
-    // std::fill(state->restLastSquaredDeviations, state->restLastSquaredDeviations + 3, 0.0);
     state->restT = 0.0;
     vqf_fill_real(state->restLastGyrLp, 3, 0.0);
     // std::fill(state->restLastGyrLp, state->restLastGyrLp + 3, 0.0);
