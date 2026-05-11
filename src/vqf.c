@@ -50,8 +50,10 @@ static inline vqf_real_t vqf_atan2(vqf_real_t y, vqf_real_t x) {
 static inline void vqf_sin_cos(vqf_real_t angle, vqf_real_t *s, vqf_real_t *c)
 {
 #if USE_CMSIS_DSP
-    // arm_sin_cos_f32() expects degrees while VQF uses radians internally.
-    arm_sin_cos_f32(angle * (vqf_real_t)(180.0f / M_PIf), s, c);
+    // arm_sin_cos_f32() expects degrees while VQF uses radians internally, and seem slower that separate calls
+    // arm_sin_cos_f32(angle * (vqf_real_t)(180.0f / M_PIf), s, c);
+    *s = VQF_SIN(angle);
+    *c = VQF_COS(angle);
 #else
     *c = cosf(angle);
     *s = sinf(angle);
