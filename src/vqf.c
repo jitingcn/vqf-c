@@ -19,11 +19,9 @@
 #if USE_CMSIS_DSP
 #define VQF_SIN(x)    arm_sin_f32(x)
 #define VQF_COS(x)    arm_cos_f32(x)
+// arm_sqrt_f32 gives us the hard-float VSQRT fast path and defined handling for negative inputs.
 static inline vqf_real_t vqf_sqrt(vqf_real_t x)
 {
-    if (x <= (vqf_real_t)0.0f) {
-        return 0.0f;
-    }
     float32_t out = 0.0f;
     arm_status status = arm_sqrt_f32((float32_t)x, &out);
     return status == ARM_MATH_SUCCESS ? (vqf_real_t)out : 0.0f;
@@ -265,16 +263,14 @@ static void filterCoeffs(vqf_real_t tau, vqf_real_t Ts, vqf_double_t outB[3], vq
     vqf_double_t fc = (M_SQRT2 / (2.0f*M_PIf))/(vqf_double_t)(tau); // time constant of dampened, non-oscillating part of step response
     // tan_fast can be replaced by sin/cos from CMSIS_DSP lib
     vqf_double_t C = tanf(M_PIf*fc*(vqf_double_t)(Ts));
-    // sqrt can be replaced by arm_sqrt_f32 from CMSIS_DSP
-    vqf_double_t D = C*C + VQF_SQRT(2)*C + 1;
+    vqf_double_t D = C*C + M_SQRT2*C + 1;
     vqf_double_t b0 = C*C/D;
     outB[0] = b0;
     outB[1] = 2*b0;
     outB[2] = b0;
     // a0 = 1.0
     outA[0] = 2*(C*C-1)/D; // a1
-    // sqrt can be replaced by arm_sqrt_f32 from CMSIS_DSP
-    outA[1] = (1-VQF_SQRT(2)*C+C*C)/D; // a2
+    outA[1] = (1-M_SQRT2*C+C*C)/D; // a2
 }
 
 static void filterInitialState(vqf_real_t x0, const vqf_double_t b[], const vqf_double_t a[], vqf_double_t out[2])
