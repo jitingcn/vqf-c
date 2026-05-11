@@ -47,6 +47,47 @@ static inline vqf_real_t vqf_atan2(vqf_real_t y, vqf_real_t x) {
 #endif
 #define M_PIf       3.14159265358979323846f
 
+static inline void vqf_sin_cos(vqf_real_t angle, vqf_real_t *s, vqf_real_t *c)
+{
+#if USE_CMSIS_DSP
+    // arm_sin_cos_f32() expects degrees while VQF uses radians internally.
+    arm_sin_cos_f32(angle * (vqf_real_t)(180.0f / M_PIf), s, c);
+#else
+    *c = cosf(angle);
+    *s = sinf(angle);
+#endif
+}
+
+static inline vqf_real_t vqf_asin(vqf_real_t x)
+{
+#if USE_CMSIS_DSP
+    if (x >= (vqf_real_t)1.0f) {
+        return (vqf_real_t)(M_PIf * 0.5f);
+    }
+    if (x <= (vqf_real_t)-1.0f) {
+        return (vqf_real_t)(-M_PIf * 0.5f);
+    }
+    return vqf_atan2(x, vqf_sqrt((vqf_real_t)1.0f - x*x));
+#else
+    return asinf(x);
+#endif
+}
+
+static inline vqf_real_t vqf_acos(vqf_real_t x)
+{
+#if USE_CMSIS_DSP
+    if (x >= (vqf_real_t)1.0f) {
+        return 0.0f;
+    }
+    if (x <= (vqf_real_t)-1.0f) {
+        return (vqf_real_t)M_PIf;
+    }
+    return vqf_atan2(vqf_sqrt((vqf_real_t)1.0f - x*x), x);
+#else
+    return acosf(x);
+#endif
+}
+
 
 void init_params(vqf_params_t *const params)
 {
@@ -197,17 +238,9 @@ static void quatSetToIdentity(vqf_real_t out[4])
 static void quatApplyDelta(vqf_real_t q[4], vqf_real_t delta, vqf_real_t out[4])
 {
     // out = quatMultiply([cos(delta/2), 0, 0, sin(delta/2)], q)
-#if USE_CMSIS_DSP
-    // arm_sin_cos_f32() expects the input angle in DEGREES (see CMSIS-DSP controller_functions.h).
-    // VQF uses radians internally, so we must convert.
     vqf_real_t half_delta = delta * 0.5f;
     vqf_real_t s, c;
-    vqf_real_t half_delta_deg = half_delta * (vqf_real_t)(180.0f / M_PIf);
-    arm_sin_cos_f32(half_delta_deg, &s, &c);
-#else
-    vqf_real_t c = cosf(delta/2);
-    vqf_real_t s = sinf(delta/2);
-#endif
+    vqf_sin_cos(half_delta, &s, &c);
     vqf_real_t w = c * q[0] - s * q[3];
     vqf_real_t x = c * q[1] - s * q[2];
     vqf_real_t y = c * q[2] + s * q[1];
@@ -534,8 +567,9 @@ static void updateGyr_internal(vqf_params_t *const params, vqf_state_t *const st
     vqf_real_t gyrNorm = norm(gyrNoBias, 3);
     vqf_real_t angle = gyrNorm * Ts;
     if (gyrNorm > EPS) {
-        vqf_real_t c = VQF_COS(angle/2);
-        vqf_real_t s = VQF_SIN(angle/2)/gyrNorm;
+        vqf_real_t s, c;
+        vqf_sin_cos(angle * 0.5f, &s, &c);
+        s /= gyrNorm;
         vqf_real_t gyrStepQuat[4] = {c, s*gyrNoBias[0], s*gyrNoBias[1], s*gyrNoBias[2]};
         quatMultiply(state->gyrQuat, gyrStepQuat, state->gyrQuat);
         normalize(state->gyrQuat, 4);
@@ -625,7 +659,7 @@ static void updateAcc_internal(vqf_params_t *const params, vqf_state_t *const st
     // calculate correction angular rate to facilitate debugging
     // acos can be replaced by 2*arctan( sqrt(1-x*x) / x )
     vqf_real_t accEarthZ = vqf_min(vqf_max(accEarth[2], (vqf_real_t)(-1.0f)), (vqf_real_t)(1.0f));
-    state->lastAccCorrAngularRate = acosf(accEarthZ)/Ts;
+    state->lastAccCorrAngularRate = vqf_acos(accEarthZ)/Ts;
 
     // bias estimation
     if (params->motionBiasEstEnabled || params->restBiasEstEnabled) {
@@ -769,7 +803,7 @@ static void updateMag_internal(vqf_params_t *const params, vqf_state_t *const st
         // asin can be replace by 2*arctan(x / sqrt(1-x*x))
         vqf_real_t magSinDip = magEarth[2]/state->magNormDip[0];
         magSinDip = vqf_min(vqf_max(magSinDip, (vqf_real_t)(-1.0f)), (vqf_real_t)(1.0f));
-        state->magNormDip[1] = -asinf(magSinDip);
+        state->magNormDip[1] = -vqf_asin(magSinDip);
 
         if (params->magCurrentTau > 0) {
             filterVec(state->magNormDip, 2, params->magCurrentTau, Ts, coeffs->magNormDipLpB,
