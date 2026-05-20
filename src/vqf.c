@@ -641,20 +641,30 @@ static void updateAcc_internal(vqf_params_t *const params, vqf_state_t *const st
 
     // inclination correction
     vqf_real_t accCorrQuat[4];
-    // sqrt can be replaced by arm_sqrt_f32 from CMSIS_DSP
     vqf_real_t q_w_arg = vqf_min(vqf_max((accEarth[2] + 1.0f) * 0.5f, (vqf_real_t)(0.0f)), (vqf_real_t)(1.0f));
     vqf_real_t q_w = VQF_SQRT(q_w_arg);
-    if (q_w > 1e-6f) {
+    if (q_w > 1e-4f) {
+        // standard formula, well-conditioned for angles up to ~179.99°
         accCorrQuat[0] = q_w;
         accCorrQuat[1] = 0.5f*accEarth[1]/q_w;
         accCorrQuat[2] = -0.5f*accEarth[0]/q_w;
         accCorrQuat[3] = 0;
     } else {
-        // to avoid numeric issues when acc is close to [0 0 -1], i.e. the correction step is close (<= 0.00011°) to 180°:
-        accCorrQuat[0] = 0;
-        accCorrQuat[1] = 1;
-        accCorrQuat[2] = 0;
-        accCorrQuat[3] = 0;
+        // near 180° (inverted tracker): use sin-based parameterization for rotation axis
+        vqf_real_t sin_angle = VQF_SQRT(accEarth[0]*accEarth[0] + accEarth[1]*accEarth[1]);
+        if (sin_angle > 1e-6f) {
+            vqf_real_t sin_half = VQF_SQRT(vqf_min((1.0f - accEarth[2]) * 0.5f, 1.0f));
+            accCorrQuat[0] = q_w;
+            accCorrQuat[1] = sin_half * accEarth[1] / sin_angle;
+            accCorrQuat[2] = sin_half * (-accEarth[0]) / sin_angle;
+            accCorrQuat[3] = 0;
+        } else {
+            // accEarth is exactly [0 0 -1], rotation axis indeterminate, pick arbitrary
+            accCorrQuat[0] = 0;
+            accCorrQuat[1] = 1;
+            accCorrQuat[2] = 0;
+            accCorrQuat[3] = 0;
+        }
     }
     quatMultiply(accCorrQuat, state->accQuat, state->accQuat);
     normalize(state->accQuat, 4);
@@ -781,6 +791,16 @@ static void updateAcc_internal(vqf_params_t *const params, vqf_state_t *const st
                 state->biasP[i] -= K[i];
             }
 #endif
+
+            // step 5: enforce covariance symmetry (counteracts float32 drift)
+            state->biasP[1] = state->biasP[3] = 0.5f * (state->biasP[1] + state->biasP[3]);
+            state->biasP[2] = state->biasP[6] = 0.5f * (state->biasP[2] + state->biasP[6]);
+            state->biasP[5] = state->biasP[7] = 0.5f * (state->biasP[5] + state->biasP[7]);
+
+            // step 6: clamp diagonal to non-negative (prevent filter divergence)
+            for (int i = 0; i < 3; i++) {
+                if (state->biasP[i*4] < 0) state->biasP[i*4] = 0;
+            }
 
             // clip bias estimate to -2..2 °/s
             clip(state->bias, 3, -biasClip, biasClip);
