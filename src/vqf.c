@@ -747,12 +747,40 @@ static void updateAcc_internal(vqf_params_t *const params, vqf_state_t *const st
             state->bias[1] += K[3]*e[0] + K[4]*e[1] + K[5]*e[2];
             state->bias[2] += K[6]*e[0] + K[7]*e[1] + K[8]*e[2];
 
-            // step 4: P = P - K R P
+#ifdef VQF_JOSEPH_COVARIANCE_UPDATE
+            // step 4: Joseph stabilized covariance update
+            // P = (I - KH) P (I - KH)^T + K W K^T
+            // where H = R (observation matrix), W = diag(w) (measurement noise)
+            // Reference: G. J. Bierman, "Factorization Methods for Discrete
+            // Sequential Estimation", Academic Press, 1977/2006.
+            {
+                // 4a: A = I - K*R
+                vqf_real_t A[9];
+                matrix3Multiply(K, R, A);
+                for(int i = 0; i < 9; i++) A[i] = -A[i];
+                A[0] += 1.0; A[4] += 1.0; A[8] += 1.0;
+
+                // 4b: P = A * P * A^T
+                vqf_real_t tmp[9];
+                matrix3Multiply(A, state->biasP, tmp);
+                matrix3MultiplyTpsSecond(tmp, A, state->biasP);
+
+                // 4c: P += K * W * K^T  (W is diagonal)
+                vqf_real_t KW[9];
+                KW[0] = K[0]*w[0]; KW[1] = K[1]*w[1]; KW[2] = K[2]*w[2];
+                KW[3] = K[3]*w[0]; KW[4] = K[4]*w[1]; KW[5] = K[5]*w[2];
+                KW[6] = K[6]*w[0]; KW[7] = K[7]*w[1]; KW[8] = K[8]*w[2];
+                matrix3MultiplyTpsSecond(KW, K, tmp);
+                for(int i = 0; i < 9; i++) state->biasP[i] += tmp[i];
+            }
+#else
+            // step 4: P = P - K R P (conventional update)
             matrix3Multiply(K, R, K); // K = K R
             matrix3Multiply(K, state->biasP, K); // K = K R P
             for(size_t i = 0; i < 9; i++) {
                 state->biasP[i] -= K[i];
             }
+#endif
 
             // clip bias estimate to -2..2 °/s
             clip(state->bias, 3, -biasClip, biasClip);
