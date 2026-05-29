@@ -8,7 +8,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#define VQF_SINGLE_PRECISION
+#define VQF_MIXED_PRECISION
 // #define VQF_NO_MOTION_BIAS_ESTIMATION
 
 #ifdef __cplusplus
@@ -19,8 +19,9 @@ extern "C" {
  * @brief Typedef for the floating-point data type used for most operations.
  *
  * By default, all floating-point calculations are performed using `double`. Set the `VQF_SINGLE_PRECISION` define to
- * change this type to `float`. Note that the Butterworth filter implementation will always use double precision as
- * using floats can cause numeric issues.
+ * change ALL types (including Butterworth filter state) to `float` — note this can cause numeric issues at high
+ * sample rates due to very small filter coefficients. Set `VQF_MIXED_PRECISION` to use `float` for general
+ * computations but `double` for Butterworth filter coefficients and state.
  */
 #ifdef VQF_SINGLE_PRECISION
 typedef float vqf_real_t;
