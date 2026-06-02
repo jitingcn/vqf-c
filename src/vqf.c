@@ -270,7 +270,7 @@ static vqf_real_t gainFromTau(vqf_real_t tau, vqf_real_t Ts)
     } else if (tau == (vqf_real_t)(0.0)) {
         return 1; // k=1 for tau=0
     } else {
-        return 1 - exp(-Ts/tau);  // fc = 1/(2*pi*tau)
+        return 1 - expf(-Ts/tau);  // fc = 1/(2*pi*tau)
     }
 }
 
