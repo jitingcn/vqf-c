@@ -317,7 +317,7 @@ static void filterInitialState(vqf_real_t x0, const vqf_double_t b[], const vqf_
     out[1] = x0*(b[2] - a[1]);
 }
 
-static void filterAdaptStateForCoeffChange(vqf_real_t last_y[], size_t N, const vqf_double_t b_old[3],
+static void filterAdaptStateForCoeffChange(const vqf_real_t last_y[], size_t N, const vqf_double_t b_old[3],
                                          const vqf_double_t a_old[2], const vqf_double_t b_new[3],
                                          const vqf_double_t a_new[2], vqf_double_t state[])
 {
@@ -326,7 +326,8 @@ static void filterAdaptStateForCoeffChange(vqf_real_t last_y[], size_t N, const 
     }
     for (size_t i = 0; i < N; i++) {
         state[0+2*i] = state[0+2*i] + (b_old[0] - b_new[0])*last_y[i];
-        state[1+2*i] = state[1+2*i] + (b_old[1] - b_new[1] - a_old[0] + a_new[0])*last_y[i];
+        // Preserve the constant-input steady state of both direct-form II delay elements.
+        state[1+2*i] = state[1+2*i] + (b_old[0] + b_old[1] - b_new[0] - b_new[1] - a_old[0] + a_new[0])*last_y[i];
     }
 }
 
@@ -371,6 +372,87 @@ static void filterVec(const vqf_real_t x[], size_t N, vqf_real_t tau, vqf_real_t
         out[i] = filterStep(x[i], b, a, state+2*i);
     }
 }
+
+void initScalarFilter(vqf_real_t tau, vqf_real_t Ts, vqf_double_t b[3], vqf_double_t a[2],
+                      vqf_double_t filter_state[3])
+{
+    filterCoeffs(tau, Ts, b, a);
+    filter_state[0] = NAN;
+    filter_state[1] = NAN;
+    filter_state[2] = 0;
+}
+
+vqf_real_t updateScalarFilter(vqf_real_t input, vqf_real_t tau, vqf_real_t Ts,
+                             const vqf_double_t b[3], const vqf_double_t a[2],
+                             vqf_double_t filter_state[3])
+{
+    vqf_real_t output;
+    filterVec(&input, 1, tau, Ts, b, a, filter_state, &output);
+    return output;
+}
+
+static void inclinationCorrection(const vqf_real_t accEarth[3], vqf_real_t accCorrQuat[4])
+{
+    vqf_real_t q_w_arg = vqf_min(vqf_max((accEarth[2] + 1.0f) * 0.5f, (vqf_real_t)(0.0f)), (vqf_real_t)(1.0f));
+    vqf_real_t q_w = VQF_SQRT(q_w_arg);
+    if (q_w > 1e-4f) {
+        // standard formula, well-conditioned for angles up to ~179.99°
+        accCorrQuat[0] = q_w;
+        accCorrQuat[1] = 0.5f*accEarth[1]/q_w;
+        accCorrQuat[2] = -0.5f*accEarth[0]/q_w;
+        accCorrQuat[3] = 0;
+    } else {
+        // near 180° (inverted tracker): use sin-based parameterization for rotation axis
+        vqf_real_t sin_angle = VQF_SQRT(accEarth[0]*accEarth[0] + accEarth[1]*accEarth[1]);
+        if (sin_angle > 1e-6f) {
+            vqf_real_t sin_half = VQF_SQRT(vqf_min((1.0f - accEarth[2]) * 0.5f, 1.0f));
+            accCorrQuat[0] = q_w;
+            accCorrQuat[1] = sin_half * accEarth[1] / sin_angle;
+            accCorrQuat[2] = sin_half * (-accEarth[0]) / sin_angle;
+            accCorrQuat[3] = 0;
+        } else {
+            // accEarth is exactly [0 0 -1], rotation axis indeterminate, pick arbitrary
+            accCorrQuat[0] = 0;
+            accCorrQuat[1] = 1;
+            accCorrQuat[2] = 0;
+            accCorrQuat[3] = 0;
+        }
+    }
+}
+
+#ifdef VQF_OUTPUT_OBSERVER
+void initOutputObserver(vqf_output_t *output, const vqf_state_t *state, const vqf_coeffs_t *coeffs)
+{
+    filterCoeffs(VQF_OUTPUT_TAU_ACC, coeffs->accTs, output->b, output->a);
+    for (size_t i = 0; i < 6; i++) {
+        output->lp[i] = NAN;
+    }
+    memcpy(output->accQuat, state->accQuat, sizeof(output->accQuat));
+}
+
+void updateOutputObserver(vqf_output_t *output, const vqf_state_t *state,
+                          const vqf_coeffs_t *coeffs, const vqf_real_t acc[3])
+{
+    if (acc[0] == 0 && acc[1] == 0 && acc[2] == 0) {
+        return;
+    }
+    vqf_real_t earth[3], lp[3];
+    quatRotate(state->gyrQuat, acc, earth);
+    filterVec(earth, 3, VQF_OUTPUT_TAU_ACC, coeffs->accTs,
+              output->b, output->a, output->lp, lp);
+    quatRotate(output->accQuat, lp, earth);
+    normalize(earth, 3);
+    vqf_real_t q[4];
+    inclinationCorrection(earth, q);
+    quatMultiply(q, output->accQuat, output->accQuat);
+    normalize(output->accQuat, 4);
+}
+
+void getOutputQuat6D(const vqf_output_t *output, const vqf_state_t *state, vqf_real_t out[4])
+{
+    quatMultiply(output->accQuat, state->gyrQuat, out);
+}
+#endif
 
 static void matrix3SetToScaledIdentity(vqf_real_t scale, vqf_real_t out[9])
 {
@@ -555,7 +637,12 @@ static void updateGyr_internal(vqf_params_t *const params, vqf_state_t *const st
                 + vqf_square(gyr[1] - state->restLastGyrLp[1]) + vqf_square(gyr[2] - state->restLastGyrLp[2]);
 
         vqf_real_t biasClip = params->biasClip*(vqf_real_t)(M_PIf/180.0f);
-        if (state->restLastSquaredDeviations[0] >= vqf_square(params->restThGyr*(vqf_real_t)(M_PIf/180.0f))
+        bool gyrFailure = state->restLastSquaredDeviations[0]
+                >= vqf_square(params->restThGyr*(vqf_real_t)(M_PIf/180.0f));
+#ifdef VQF_REST_TRANSITION
+        gyrFailure = vqf_rest_transition_failure(params, state, gyr, Ts, gyrFailure);
+#endif
+        if (gyrFailure
                 || fabsf(state->restLastGyrLp[0]) > biasClip || fabsf(state->restLastGyrLp[1]) > biasClip
                 || fabsf(state->restLastGyrLp[2]) > biasClip) {
             state->restT = 0.0;
@@ -627,12 +714,18 @@ static void updateAcc_internal(vqf_params_t *const params, vqf_state_t *const st
                 state->restDetected = true;
             }
         }
+#ifdef VQF_REST_TRANSITION
+        vqf_rest_transition_hard_acc(params, state, Ts);
+#endif
     }
 
     vqf_real_t accEarth[3];
 
     // filter acc in inertial frame
     quatRotate(state->gyrQuat, acc, accEarth);
+#ifdef VQF_ADAPTIVE_BIAS
+    vqf_bias_policy_features(state, coeffs, accEarth);
+#endif
     filterVec(accEarth, 3, params->tauAcc, Ts, coeffs->accLpB, coeffs->accLpA, state->accLpState, state->lastAccLp);
 
     // transform to 6D earth frame and normalize
@@ -641,31 +734,7 @@ static void updateAcc_internal(vqf_params_t *const params, vqf_state_t *const st
 
     // inclination correction
     vqf_real_t accCorrQuat[4];
-    vqf_real_t q_w_arg = vqf_min(vqf_max((accEarth[2] + 1.0f) * 0.5f, (vqf_real_t)(0.0f)), (vqf_real_t)(1.0f));
-    vqf_real_t q_w = VQF_SQRT(q_w_arg);
-    if (q_w > 1e-4f) {
-        // standard formula, well-conditioned for angles up to ~179.99°
-        accCorrQuat[0] = q_w;
-        accCorrQuat[1] = 0.5f*accEarth[1]/q_w;
-        accCorrQuat[2] = -0.5f*accEarth[0]/q_w;
-        accCorrQuat[3] = 0;
-    } else {
-        // near 180° (inverted tracker): use sin-based parameterization for rotation axis
-        vqf_real_t sin_angle = VQF_SQRT(accEarth[0]*accEarth[0] + accEarth[1]*accEarth[1]);
-        if (sin_angle > 1e-6f) {
-            vqf_real_t sin_half = VQF_SQRT(vqf_min((1.0f - accEarth[2]) * 0.5f, 1.0f));
-            accCorrQuat[0] = q_w;
-            accCorrQuat[1] = sin_half * accEarth[1] / sin_angle;
-            accCorrQuat[2] = sin_half * (-accEarth[0]) / sin_angle;
-            accCorrQuat[3] = 0;
-        } else {
-            // accEarth is exactly [0 0 -1], rotation axis indeterminate, pick arbitrary
-            accCorrQuat[0] = 0;
-            accCorrQuat[1] = 1;
-            accCorrQuat[2] = 0;
-            accCorrQuat[3] = 0;
-        }
-    }
+    inclinationCorrection(accEarth, accCorrQuat);
     quatMultiply(accCorrQuat, state->accQuat, state->accQuat);
     normalize(state->accQuat, 4);
 
@@ -680,7 +749,11 @@ static void updateAcc_internal(vqf_params_t *const params, vqf_state_t *const st
 
         vqf_real_t accGyrQuat[4];
         vqf_real_t R[9];
+#ifndef VQF_NO_MOTION_BIAS_ESTIMATION
+        vqf_real_t *biasLp = state->motionBiasEstLastBiasLp;
+#else
         vqf_real_t biasLp[2];
+#endif
 
         // get rotation matrix corresponding to accGyrQuat
         getQuat6D(state, accGyrQuat);
@@ -700,18 +773,30 @@ static void updateAcc_internal(vqf_params_t *const params, vqf_state_t *const st
 
         // low-pass filter R and R*b_hat
         filterVec(R, 9, params->tauAcc, Ts, coeffs->accLpB, coeffs->accLpA, state->motionBiasEstRLpState, R);
+#ifndef VQF_NO_MOTION_BIAS_ESTIMATION
+        // R is reused as the rest-bias observation matrix below; retain its actual filtered output first.
+        memcpy(state->motionBiasEstLastR, R, sizeof(state->motionBiasEstLastR));
+#endif
         filterVec(biasLp, 2, params->tauAcc, Ts, coeffs->accLpB, coeffs->accLpA, state->motionBiasEstBiasLpState,
                   biasLp);
 
         // set measurement error and covariance for the respective Kalman filter update
         vqf_real_t w[3];
         vqf_real_t e[3];
-        if (state->restDetected && params->restBiasEstEnabled) {
+#ifdef VQF_CYCLE_BIAS_OBSERVATION
+        bool restSelected = vqf_rest_bias_select(params, state);
+#else
+        bool restSelected = state->restDetected && params->restBiasEstEnabled;
+#endif
+        if (restSelected) {
             e[0] = state->restLastGyrLp[0] - state->bias[0];
             e[1] = state->restLastGyrLp[1] - state->bias[1];
             e[2] = state->restLastGyrLp[2] - state->bias[2];
             matrix3SetToScaledIdentity(1.0, R);
             vqf_fill_real(w, 3, coeffs->biasRestW);
+#if defined(VQF_FAST_REST_RECOVERY) || defined(VQF_CYCLE_BIAS_OBSERVATION)
+            vqf_rest_bias_observation(params, state, coeffs, e, w);
+#endif
             // std::fill(w, w+3, coeffs->biasRestW);
         } else if (params->motionBiasEstEnabled) {
             e[0] = -accEarth[1]/Ts + biasLp[0] - R[0]*state->bias[0] - R[1]*state->bias[1] - R[2]*state->bias[2];
@@ -737,6 +822,9 @@ static void updateAcc_internal(vqf_params_t *const params, vqf_state_t *const st
             state->biasP[8] += coeffs->biasV;
         }
         if (w[0] >= 0) {
+#ifdef VQF_ADAPTIVE_BIAS
+            vqf_bias_policy_weights(params, state, coeffs, R, e, w);
+#endif
             // clip disagreement to -2..2 °/s
             // (this also effectively limits the harm done by the first inclination correction step)
             clip(e, 3, -biasClip, biasClip);
@@ -1117,6 +1205,10 @@ void setMotionBiasEstEnabled(vqf_params_t *const params, vqf_state_t *const stat
     // std::fill(state->motionBiasEstRLpState, state->motionBiasEstRLpState + 9*2, NaN);
     vqf_fill_double(state->motionBiasEstBiasLpState, 2*2, NaN);
     // std::fill(state->motionBiasEstBiasLpState, state->motionBiasEstBiasLpState + 2*2, NaN);
+#ifndef VQF_NO_MOTION_BIAS_ESTIMATION
+    vqf_fill_real(state->motionBiasEstLastR, 9, 0);
+    vqf_fill_real(state->motionBiasEstLastBiasLp, 2, 0);
+#endif
 }
 
 void setRestBiasEstEnabled(vqf_params_t *const params, vqf_state_t *const state, bool enabled)
@@ -1169,18 +1261,12 @@ void setTauAcc(vqf_params_t *const params, vqf_state_t *const state, vqf_coeffs_
     filterCoeffs(params->tauAcc, coeffs->accTs, newB, newA);
     filterAdaptStateForCoeffChange(state->lastAccLp, 3, coeffs->accLpB, coeffs->accLpA, newB, newA, state->accLpState);
 
-    // For R and biasLP, the last value is not saved in the state->
-    // Since b0 is small (at reasonable settings), the last output is close to state[0].
-    vqf_real_t R[9];
-    for (size_t i = 0; i < 9; i++) {
-        R[i] = state->motionBiasEstRLpState[2*i];
-    }
-    filterAdaptStateForCoeffChange(R, 9, coeffs->accLpB, coeffs->accLpA, newB, newA, state->motionBiasEstRLpState);
-    vqf_real_t biasLp[2];
-    for (size_t i = 0; i < 2; i++) {
-        biasLp[i] = state->motionBiasEstBiasLpState[2*i];
-    }
-    filterAdaptStateForCoeffChange(biasLp, 2, coeffs->accLpB, coeffs->accLpA, newB, newA, state->motionBiasEstBiasLpState);
+#ifndef VQF_NO_MOTION_BIAS_ESTIMATION
+    filterAdaptStateForCoeffChange(state->motionBiasEstLastR, 9, coeffs->accLpB, coeffs->accLpA,
+                                  newB, newA, state->motionBiasEstRLpState);
+    filterAdaptStateForCoeffChange(state->motionBiasEstLastBiasLp, 2, coeffs->accLpB, coeffs->accLpA,
+                                  newB, newA, state->motionBiasEstBiasLpState);
+#endif
 
     memcpy(coeffs->accLpB, newB, sizeof(newB));
     // std::copy(newB, newB+3, coeffs->accLpB);
@@ -1229,6 +1315,10 @@ void resetState(vqf_params_t *const params, vqf_state_t *const state, vqf_coeffs
     // std::fill(state->motionBiasEstRLpState, state->motionBiasEstRLpState + 9*2, NaN);
     vqf_fill_double(state->motionBiasEstBiasLpState, 2*2, NaN);
     // std::fill(state->motionBiasEstBiasLpState, state->motionBiasEstBiasLpState + 2*2, NaN);
+#ifndef VQF_NO_MOTION_BIAS_ESTIMATION
+    vqf_fill_real(state->motionBiasEstLastR, 9, 0);
+    vqf_fill_real(state->motionBiasEstLastBiasLp, 2, 0);
+#endif
 
 
     vqf_fill_real(state->restLastSquaredDeviations, 2, 0.0);

@@ -9,7 +9,7 @@
 #include <stdbool.h>
 
 #define VQF_MIXED_PRECISION
-// #define VQF_NO_MOTION_BIAS_ESTIMATION
+/* VQF_NO_MOTION_BIAS_ESTIMATION is currently unsupported by this fork. */
 
 #ifdef __cplusplus
 extern "C" {
@@ -476,6 +476,18 @@ typedef struct vqf_state_s {
      * @brief Internal low-pass filter state for the current norm and dip angle.
      */
     vqf_double_t magNormDipLpState[2*2];
+#ifndef VQF_NO_MOTION_BIAS_ESTIMATION
+    /**
+     * @brief Actual last output of the rotation-matrix low-pass filter, before the rest-bias update replaces R.
+     *
+     * Retained with its filter state so setTauAcc() can adapt coefficients without approximating the output.
+     */
+    vqf_real_t motionBiasEstLastR[9];
+    /**
+     * @brief Actual last output of the rotated-bias low-pass filter.
+     */
+    vqf_real_t motionBiasEstLastBiasLp[2];
+#endif
 } vqf_state_t;
 
 /**
@@ -571,6 +583,56 @@ typedef struct vqf_coeffs_s
     vqf_double_t magNormDipLpA[2];
 } vqf_coeffs_t;
 
+#ifdef VQF_OUTPUT_OBSERVER
+#ifndef VQF_OUTPUT_TAU_ACC
+#error "VQF_OUTPUT_OBSERVER requires build-defined VQF_OUTPUT_TAU_ACC in seconds"
+#endif
+/* Independent fixed-tau inclination output; never fed to bias estimation.
+ * Define VQF_OUTPUT_TAU_ACC consistently for every translation unit. Initialize
+ * with the configured accTs and update once per accelerometer sample at that
+ * fixed period. This observer does not use timestamps from updateAccTs; it must
+ * be reinitialized if accTs changes.
+ *
+ * An application may serialize lp and accQuat (6*sizeof(vqf_double_t) +
+ * 4*sizeof(vqf_real_t), or 64 bytes with 8-byte double and 4-byte float in
+ * mixed precision). Coefficients are rebuilt from accTs and the configured tau. */
+typedef struct {
+    vqf_double_t b[3], a[2], lp[6];
+    vqf_real_t accQuat[4];
+} vqf_output_t;
+void initOutputObserver(vqf_output_t *output, const vqf_state_t *state, const vqf_coeffs_t *coeffs);
+void updateOutputObserver(vqf_output_t *output, const vqf_state_t *state,
+                          const vqf_coeffs_t *coeffs, const vqf_real_t acc[3]);
+void getOutputQuat6D(const vqf_output_t *output, const vqf_state_t *state, vqf_real_t out[4]);
+#endif
+
+/* Enabling any of the following feature flags requires the application to
+ * supply all hook definitions exposed by that flag; there are no library
+ * defaults. Define feature flags consistently across translation units. */
+#ifdef VQF_ADAPTIVE_BIAS
+/* Optional application policy. No callbacks or extra retained core state. */
+void vqf_bias_policy_features(vqf_state_t *state, vqf_coeffs_t *coeffs, const vqf_real_t earth[3]);
+void vqf_bias_policy_weights(vqf_params_t *params, vqf_state_t *state, vqf_coeffs_t *coeffs,
+                             const vqf_real_t R[9], const vqf_real_t e[3], vqf_real_t w[3]);
+#endif
+
+#ifdef VQF_REST_TRANSITION
+/* gyrFailure is the core's original deviation-threshold result. The hook may
+ * replace that result, but the core still applies its independent biasClip veto.
+ * The application owns transition policy state. */
+bool vqf_rest_transition_failure(vqf_params_t *params, vqf_state_t *state,
+                                 const vqf_real_t gyr[3], vqf_real_t Ts, bool gyrFailure);
+void vqf_rest_transition_hard_acc(vqf_params_t *params, vqf_state_t *state, vqf_real_t Ts);
+#endif
+
+#ifdef VQF_CYCLE_BIAS_OBSERVATION
+bool vqf_rest_bias_select(vqf_params_t *params, vqf_state_t *state);
+#endif
+#if defined(VQF_FAST_REST_RECOVERY) || defined(VQF_CYCLE_BIAS_OBSERVATION)
+void vqf_rest_bias_observation(vqf_params_t *params, vqf_state_t *state, vqf_coeffs_t *coeffs,
+                              vqf_real_t e[3], vqf_real_t w[3]);
+#endif
+
 /**
  * @brief A Versatile Quaternion-based Filter for IMU Orientation Estimation.
  *
@@ -615,6 +677,30 @@ typedef struct vqf_coeffs_s
  * +------------------------+--------------------------+--------------------------+---------------------------+
  * \endrst
  */
+
+/**
+ * @brief Initializes a scalar Butterworth filter using the native vector-filter recurrence.
+ *
+ * Coefficients are computed once for the given time constant and sampling period.
+ * The state requires three slots: startup stores a NaN marker, sample count and sum
+ * before switching to the two-slot direct-form state.
+ *
+ * @param tau filter time constant in seconds
+ * @param Ts sampling period in seconds
+ * @param b output numerator coefficients (three slots)
+ * @param a output denominator coefficients (two slots, a0 is implicitly one)
+ * @param filter_state output filter state (three slots)
+ */
+void initScalarFilter(vqf_real_t tau, vqf_real_t Ts, vqf_double_t b[3], vqf_double_t a[2],
+                      vqf_double_t filter_state[3]);
+/**
+ * @brief Advances a scalar filter once, including the native running-mean startup.
+ *
+ * Use the same tau and Ts as #initScalarFilter, with its coefficients and three-slot state.
+ */
+vqf_real_t updateScalarFilter(vqf_real_t input, vqf_real_t tau, vqf_real_t Ts,
+                             const vqf_double_t b[3], const vqf_double_t a[2],
+                             vqf_double_t filter_state[3]);
 
 void init_params(vqf_params_t *const params);
 /**
